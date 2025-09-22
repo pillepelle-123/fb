@@ -16,6 +16,10 @@ import {
   Chip,
   Menu,
   MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -51,6 +55,7 @@ const BookEditor = ({ token, setToken }) => {
   const [bookDataLoaded, setBookDataLoaded] = useState(false);
   const [pdfQualityDialog, setPdfQualityDialog] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
 
 
   useEffect(() => {
@@ -187,11 +192,30 @@ const BookEditor = ({ token, setToken }) => {
       setDeletedPages([]);
       
       showSnackbar('Freundschaftsbuch erfolgreich gespeichert!', 'success');
+      setSaveSuccessOpen(true);
     } catch (error) {
       showSnackbar('Fehler beim Speichern: ' + (error.response?.data?.error || error.message), 'error');
     }
     finally {
       setIsSaving(false);
+      // Ensure camera shows the full canvas boundary after saving
+      try {
+        if (editor) {
+          const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
+          setTimeout(() => {
+            editor.zoomToFit({
+              targetBounds: {
+                x: -canvasWidth / 2,
+                y: -canvasHeight / 2,
+                w: canvasWidth,
+                h: canvasHeight
+              },
+              inset: 20,
+              animation: { duration: 0 }
+            });
+          }, 200);
+        }
+      } catch (_) {}
     }
   };
 
@@ -657,6 +681,25 @@ const BookEditor = ({ token, setToken }) => {
           exportToPDF(qualityOption);
         }}
       />
+
+      <Dialog open={saveSuccessOpen} onClose={() => setSaveSuccessOpen(false)}>
+        <DialogTitle>Buch gespeichert</DialogTitle>
+        <DialogContent>
+          <Typography>Das Buch wurde erfolgreich gespeichert.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setSaveSuccessOpen(false);
+              // Re-apply page switch behavior (including zoomToFit to full canvas boundary)
+              changePage(currentPage);
+            }}
+          >
+            Ok
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
