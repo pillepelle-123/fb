@@ -236,11 +236,18 @@ const BookEditor = ({ token, setToken }) => {
     if (editor) {
       
       setTimeout(() => {
-        const shapes = editor.getCurrentPageShapes();
-        if (shapes.length > 0) {
-          editor.zoomToFit();
-        }
-      }, 1000);
+        const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
+        editor.zoomToFit({
+          targetBounds: {
+            x: -canvasWidth / 2,
+            y: -canvasHeight / 2,
+            w: canvasWidth,
+            h: canvasHeight
+          },
+          inset: 20,
+          animation: { duration: 0 }
+        });
+      }, 400);
     }
   };
 
@@ -261,6 +268,18 @@ const BookEditor = ({ token, setToken }) => {
       setTimeout(() => {
         editor.selectAll();
         editor.deleteShapes(editor.getSelectedShapeIds());
+        // Ensure camera shows the full canvas boundary for the new page
+        const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
+        editor.zoomToFit({
+          targetBounds: {
+            x: -canvasWidth / 2,
+            y: -canvasHeight / 2,
+            w: canvasWidth,
+            h: canvasHeight
+          },
+          inset: 20,
+          animation: { duration: 0 }
+        });
       }, 100);
     }
   };
@@ -281,10 +300,20 @@ const BookEditor = ({ token, setToken }) => {
         const newPage = Math.max(1, currentPage - 1);
         setCurrentPage(newPage);
         
-        // Zoom to fit after page deletion
+        // Zoom to canvas boundary after page deletion
         if (editor) {
           setTimeout(() => {
-            editor.zoomToFit();
+            const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
+            editor.zoomToFit({
+              targetBounds: {
+                x: -canvasWidth / 2,
+                y: -canvasHeight / 2,
+                w: canvasWidth,
+                h: canvasHeight
+              },
+              inset: 20,
+              animation: { duration: 0 }
+            });
           }, 200);
         }
         
@@ -429,13 +458,20 @@ const BookEditor = ({ token, setToken }) => {
       if (currentPageData) {
         editor.store.loadSnapshot(currentPageData);
         
-        // Zoom to fit after restoring current page
+        // After export restore, ensure canvas boundary fits
         setTimeout(() => {
-          const shapes = editor.getCurrentPageShapes();
-          if (shapes.length > 0) {
-            editor.zoomToFit();
-          }
-        }, 500);
+          const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
+          editor.zoomToFit({
+            targetBounds: {
+              x: -canvasWidth / 2,
+              y: -canvasHeight / 2,
+              w: canvasWidth,
+              h: canvasHeight
+            },
+            inset: 20,
+            animation: { duration: 0 }
+          });
+        }, 300);
       }
       
       pdf.save(`${bookTitle || 'Freundschaftsbuch'}.pdf`);
