@@ -50,6 +50,7 @@ const BookEditor = ({ token, setToken }) => {
   const [bookOrientation, setBookOrientation] = useState('portrait');
   const [bookDataLoaded, setBookDataLoaded] = useState(false);
   const [pdfQualityDialog, setPdfQualityDialog] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
 
   useEffect(() => {
@@ -77,7 +78,7 @@ const BookEditor = ({ token, setToken }) => {
 
 
   useEffect(() => {
-    if (editor) {
+    if (editor && !isSaving) {
       // First check temp pages for any changes
       const tempPageData = tempPages.find(p => p.page_number === currentPage);
       
@@ -88,16 +89,10 @@ const BookEditor = ({ token, setToken }) => {
         const savedPageData = pages.find(p => p.page_number === currentPage);
         if (savedPageData && savedPageData.canvas_data && typeof savedPageData.canvas_data === 'object' && savedPageData.canvas_data.schema) {
           editor.store.loadSnapshot(savedPageData.canvas_data);
-        } else if (tempPageData && tempPageData.canvas_data === null) {
-          // Only clear canvas for new temp pages that were just created
-          setTimeout(() => {
-            editor.selectAll();
-            editor.deleteShapes(editor.getSelectedShapeIds());
-          }, 100);
         }
       }
     }
-  }, [editor, currentPage]);
+  }, [editor, currentPage, pages, tempPages, isSaving]);
 
 
 
@@ -142,6 +137,7 @@ const BookEditor = ({ token, setToken }) => {
     }
     
     try {
+      setIsSaving(true);
       // Save current page canvas data first
       const canvasData = editor.store.getSnapshot();
       
@@ -185,13 +181,17 @@ const BookEditor = ({ token, setToken }) => {
         );
       }
       
-      // Clear temp pages and deleted pages
+      // Refresh pages from server to reflect saved state, then clear local buffers
+      await fetchPages();
       setTempPages([]);
       setDeletedPages([]);
       
       showSnackbar('Freundschaftsbuch erfolgreich gespeichert!', 'success');
     } catch (error) {
       showSnackbar('Fehler beim Speichern: ' + (error.response?.data?.error || error.message), 'error');
+    }
+    finally {
+      setIsSaving(false);
     }
   };
 
@@ -447,12 +447,16 @@ const BookEditor = ({ token, setToken }) => {
     }
   };
 
-  // Auto-create first page if book has no pages
+  // Auto-create first page if book has no pages - use same flow as manual "Neue Seite"
   useEffect(() => {
-    if (pages.length === 0 && tempPages.length === 0 && editor && bookDataLoaded) {
-      addNewPage();
+    if (editor && bookDataLoaded) {
+      const noPersistentPages = pages.length === 0;
+      const noTempPages = tempPages.length === 0;
+      if (noPersistentPages && noTempPages) {
+        addNewPage();
+      }
     }
-  }, [pages, tempPages, editor, bookDataLoaded]);
+  }, [pages.length, tempPages.length, editor, bookDataLoaded]);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
