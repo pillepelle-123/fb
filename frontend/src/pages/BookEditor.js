@@ -359,74 +359,58 @@ const BookEditor = ({ token, setToken }) => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Get content shapes (exclude boundary shapes)
-        const shapes = editor.getCurrentPageShapes().filter(shape => 
-          !shape.id.includes('boundary')
-        );
-        
-        // Create invisible corner markers at exact page boundary corners
-        const topLeft = editor.createShape({
-          type: 'geo',
-          x: -pageWidth / 2,
-          y: -pageHeight / 2,
-          props: { w: 1, h: 1, geo: 'rectangle', fill: 'none', color: 'white', size: 's' }
-        });
-        const bottomRight = editor.createShape({
-          type: 'geo', 
-          x: pageWidth / 2 - 1,
-          y: pageHeight / 2 - 1,
-          props: { w: 1, h: 1, geo: 'rectangle', fill: 'none', color: 'white', size: 's' }
-        });
-        
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const allShapes = editor.getCurrentPageShapes().filter(shape => {
-          // Exclude marker shapes only, include boundaries
-          if (shape.id === topLeft || shape.id === bottomRight) return false;
-          return true;
-        });
-        
-        const svg = await editor.getSvg(allShapes, {
-          scale: 1,
-          background: false
-        });
-        
-        // Remove markers
-        editor.deleteShape(topLeft);
-        editor.deleteShape(bottomRight);
-        
+        // Collect all shapes and exclude boundary helpers
+        const allShapes = editor.getCurrentPageShapes();
+        const shapesToExport = allShapes.filter(shape => !shape.id.includes('boundary'));
+
+        // Generate SVG for selected shapes (no background)
+        const svg = await editor.getSvg(shapesToExport, { scale: 1, background: false });
+
         if (svg) {
+          // Map page rectangle from editor coords into the SVG's viewBox coords
+          const viewBoxAttr = svg.getAttribute('viewBox');
+          let minX = 0;
+          let minY = 0;
+          let vbW = 0;
+          let vbH = 0;
+          if (viewBoxAttr) {
+            const parts = viewBoxAttr.split(/\s+/).map(Number);
+            if (parts.length === 4 && parts.every(n => Number.isFinite(n))) {
+              [minX, minY, vbW, vbH] = parts;
+            }
+          } else {
+            // Fallback: if no viewBox, assume 0,0,width,height
+            vbW = Number(svg.getAttribute('width')) || pageWidth;
+            vbH = Number(svg.getAttribute('height')) || pageHeight;
+          }
+
           const svgData = new XMLSerializer().serializeToString(svg);
           const img = new Image();
-          
+
           await new Promise((resolve) => {
             img.onload = () => {
-              // Find page boundary position in the SVG
-              const svgBounds = img.width;
-              const svgHeight = img.height;
-              const centerX = svgBounds / 2;
-              const centerY = svgHeight / 2;
-              
-              // Calculate page boundary rectangle position
-              const pageRect = {
-                x: centerX - pageWidth / 2,
-                y: centerY - pageHeight / 2,
-                width: pageWidth,
-                height: pageHeight
-              };
-              
-              // Clip and draw only the page boundary area
+              // Compute pixel mapping from SVG units to image pixels
+              const scaleX = vbW ? img.width / vbW : 1;
+              const scaleY = vbH ? img.height / vbH : 1;
+
+              // Page rectangle in SVG local coordinates (viewBox space)
+              const pageXInSvg = -pageWidth / 2 - minX;
+              const pageYInSvg = -pageHeight / 2 - minY;
+              const pageWInSvg = pageWidth;
+              const pageHInSvg = pageHeight;
+
+              // Convert to source pixels for drawImage
+              const sx = pageXInSvg * scaleX;
+              const sy = pageYInSvg * scaleY;
+              const sw = pageWInSvg * scaleX;
+              const sh = pageHInSvg * scaleY;
+
+              // Ensure white background and draw only the cropped page area
               ctx.save();
               ctx.beginPath();
               ctx.rect(0, 0, pageWidth, pageHeight);
               ctx.clip();
-              
-              ctx.drawImage(
-                img,
-                pageRect.x, pageRect.y, pageRect.width, pageRect.height,
-                0, 0, pageWidth, pageHeight
-              );
-              
+              ctx.drawImage(img, sx, sy, sw, sh, 0, 0, pageWidth, pageHeight);
               ctx.restore();
               resolve();
             };
