@@ -1,5 +1,6 @@
 node_modules
-backend/storage
+backend/storage/*
+!backend/storage/.gitkeep
 
 # Environment variables
 .env
