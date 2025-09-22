@@ -2,8 +2,10 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const path = require('path');
 const { pool, initDB } = require('./database');
 const { generateToken, verifyToken, checkPermission, bcrypt } = require('./auth');
+const { processCanvasData, loadCanvasData } = require('./imageHandler');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,7 +23,11 @@ const io = socketIo(server, {
 });
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Serve images statically
+app.use('/api/images', express.static(path.join(__dirname, 'storage')));
 
 // Auth routes
 app.post('/api/register', async (req, res) => {
@@ -190,8 +196,6 @@ app.post('/api/books', verifyToken, async (req, res) => {
       [bookResult.rows[0].id, req.userId, 'admin']
     );
     
-
-    
     res.json(bookResult.rows[0]);
   } catch (err) {
     console.error('Book creation error:', err);
@@ -296,8 +300,6 @@ app.delete('/api/books/:bookId/pages/:pageNumber', verifyToken, checkPermission(
   }
 });
 
-
-
 // Page routes
 app.get('/api/books/:bookId/pages', verifyToken, checkPermission('viewer'), async (req, res) => {
   try {
@@ -305,7 +307,16 @@ app.get('/api/books/:bookId/pages', verifyToken, checkPermission('viewer'), asyn
       'SELECT * FROM public.pages WHERE book_id = $1 ORDER BY page_number',
       [req.params.bookId]
     );
-    res.json(result.rows);
+    
+    // Load images back into canvas data for each page
+    const pagesWithImages = await Promise.all(
+      result.rows.map(async (page) => ({
+        ...page,
+        canvas_data: await loadCanvasData(page.canvas_data, req.userId, req.params.bookId)
+      }))
+    );
+    
+    res.json(pagesWithImages);
   } catch (err) {
     console.error('Failed to fetch pages:', err);
     res.status(500).json({ error: 'Failed to fetch pages' });
@@ -316,6 +327,9 @@ app.put('/api/books/:bookId/pages/:pageNumber', verifyToken, checkPermission('ed
   try {
     const { bookId, pageNumber } = req.params;
     const { canvasData } = req.body;
+
+    // Process canvas data to extract and save images
+    const processedCanvasData = await processCanvasData(canvasData, req.userId, bookId);
 
     // Begin a transaction
     const client = await pool.connect();
@@ -337,12 +351,12 @@ app.put('/api/books/:bookId/pages/:pageNumber', verifyToken, checkPermission('ed
       if (existingPage.rows.length > 0) {
         await client.query(
           'UPDATE public.pages SET canvas_data = $1 WHERE book_id = $2 AND page_number = $3',
-          [canvasData, bookId, pageNumber]
+          [processedCanvasData, bookId, pageNumber]
         );
       } else {
         await client.query(
           'INSERT INTO public.pages (book_id, page_number, canvas_data) VALUES ($1, $2, $3)',
-          [bookId, pageNumber, canvasData]
+          [bookId, pageNumber, processedCanvasData]
         );
       }
 
@@ -358,7 +372,9 @@ app.put('/api/books/:bookId/pages/:pageNumber', verifyToken, checkPermission('ed
     console.error('Failed to save page:', err);
     res.status(500).json({ error: 'Failed to save page' });
   }
-});// Socket.io for real-time collaboration
+});
+
+// Socket.io for real-time collaboration
 io.on('connection', (socket) => {
   socket.on('joinBook', (bookId) => {
     socket.join(`book-${bookId}`);

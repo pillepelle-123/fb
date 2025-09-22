@@ -428,6 +428,14 @@ const BookEditor = ({ token, setToken }) => {
       // Restore current page
       if (currentPageData) {
         editor.store.loadSnapshot(currentPageData);
+        
+        // Zoom to fit after restoring current page
+        setTimeout(() => {
+          const shapes = editor.getCurrentPageShapes();
+          if (shapes.length > 0) {
+            editor.zoomToFit();
+          }
+        }, 500);
       }
       
       pdf.save(`${bookTitle || 'Freundschaftsbuch'}.pdf`);

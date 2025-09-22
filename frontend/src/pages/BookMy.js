@@ -43,7 +43,12 @@ const BookMy = ({ token, setToken }) => {
         headers: { Authorization: `Bearer ${token}` },
         params: { archived: false }
       });
-      setBooks(response.data);
+      const sortedBooks = response.data.sort((a, b) => {
+        const dateA = new Date(a.last_saved_at || a.created_at);
+        const dateB = new Date(b.last_saved_at || b.created_at);
+        return dateB - dateA;
+      });
+      setBooks(sortedBooks);
     } catch (error) {
       console.error('Failed to fetch books');
     }
@@ -220,6 +225,14 @@ const BookMy = ({ token, setToken }) => {
                     </Typography>
                     <Typography variant="body2" color="text.secondary" paragraph>
                       {book.description}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      Zuletzt gespeichert: {(() => {
+                        const date = new Date(book.last_saved_at || book.created_at);
+                        const today = new Date();
+                        const isToday = date.toDateString() === today.toDateString();
+                        return isToday ? date.toLocaleTimeString('de-DE') : date.toLocaleString('de-DE');
+                      })()}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                       <Chip label={book.role} size="small" color="primary" />

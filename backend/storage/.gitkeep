@@ -1,0 +1,2 @@
+# This file ensures the storage directory is tracked by git
+# User images will be stored in subdirectories: storage/{userId}/{bookId}/

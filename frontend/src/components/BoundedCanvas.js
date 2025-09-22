@@ -83,6 +83,20 @@ const BoundedCanvas = ({ onMount, fitToView = false, pageSize = 'A4', orientatio
         },
         isLocked: true
       });
+
+      // Keep boundary shapes on top
+      const ensureBoundariesOnTop = () => {
+        const allShapes = editor.getCurrentPageShapes();
+        const boundaryShapes = allShapes.filter(s => s.id.includes('boundary'));
+        if (boundaryShapes.length > 0) {
+          editor.bringToFront(boundaryShapes.map(s => s.id));
+        }
+      };
+
+      // Listen for shape changes and ensure boundaries stay on top
+      const unsubscribe = editor.store.listen(() => {
+        ensureBoundariesOnTop();
+      });
       
       if (!hasInitialized.current || fitToView) {
         fitCanvasToView();
