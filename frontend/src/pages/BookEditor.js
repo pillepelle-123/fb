@@ -92,6 +92,34 @@ const BookEditor = ({ token, setToken }) => {
     }
   }, [editor, currentPage, tempPages, isSaving]);
 
+  // Add smooth zoom with Ctrl + Mouse wheel
+  useEffect(() => {
+    if (!editor) return;
+    
+    const handleWheel = (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const steps = Math.abs(e.deltaY) > 10 ? Math.ceil(Math.abs(e.deltaY) / 10) : 1;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        
+        for (let i = 0; i < steps; i++) {
+          if (e.deltaY < 0) {
+            editor.zoomIn(point, { duration: 0 });
+          } else {
+            editor.zoomOut(point, { duration: 0 });
+          }
+        }
+      }
+    };
+    
+    const container = document.querySelector('.tldraw-container');
+    if (container) {
+      container.addEventListener('wheel', handleWheel, { passive: false });
+      return () => container.removeEventListener('wheel', handleWheel);
+    }
+  }, [editor]);
+
 
 
   const fetchPages = async () => {
