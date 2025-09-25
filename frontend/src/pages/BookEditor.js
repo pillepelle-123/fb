@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Tldraw } from 'tldraw';
 import 'tldraw/tldraw.css';
@@ -56,6 +56,7 @@ const BookEditor = ({ token, setToken }) => {
   const [pdfQualityDialog, setPdfQualityDialog] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
+  const initialPageCreatedRef = useRef(false);
 
 
   useEffect(() => {
@@ -78,26 +79,18 @@ const BookEditor = ({ token, setToken }) => {
       newSocket.close();
       window.removeEventListener('error', resizeObserverErrorHandler);
     };
-  }, [bookId, currentPage]);
+  }, [bookId]);
 
 
 
   useEffect(() => {
     if (editor && !isSaving) {
-      // First check temp pages for any changes
       const tempPageData = tempPages.find(p => p.page_number === currentPage);
-      
       if (tempPageData && tempPageData.canvas_data && typeof tempPageData.canvas_data === 'object' && tempPageData.canvas_data.schema) {
         editor.store.loadSnapshot(tempPageData.canvas_data);
-      } else {
-        // Then check saved pages
-        const savedPageData = pages.find(p => p.page_number === currentPage);
-        if (savedPageData && savedPageData.canvas_data && typeof savedPageData.canvas_data === 'object' && savedPageData.canvas_data.schema) {
-          editor.store.loadSnapshot(savedPageData.canvas_data);
-        }
       }
     }
-  }, [editor, currentPage, pages, tempPages, isSaving]);
+  }, [editor, currentPage, tempPages, isSaving]);
 
 
 
@@ -107,8 +100,12 @@ const BookEditor = ({ token, setToken }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       setPages(response.data);
-      
-
+      // Load all pages into React state for editing
+      setTempPages(
+        (response.data || [])
+          .map(p => ({ page_number: p.page_number, canvas_data: p.canvas_data }))
+          .sort((a, b) => a.page_number - b.page_number)
+      );
     } catch (error) {
       console.error('Failed to fetch pages:', error);
     }
@@ -146,27 +143,13 @@ const BookEditor = ({ token, setToken }) => {
       // Save current page canvas data first
       const canvasData = editor.store.getSnapshot();
       
-      // Collect all pages with their data
-      const allPagesToSave = [];
-      
-      // Add existing pages (excluding deleted ones)
-      for (const page of pages) {
-        if (!deletedPages.includes(page.page_number)) {
-          const tempPageData = tempPages.find(p => p.page_number === page.page_number);
-          const pageData = page.page_number === currentPage ? canvasData : 
-                          (tempPageData?.canvas_data || page.canvas_data);
-          allPagesToSave.push({ original_number: page.page_number, canvas_data: pageData });
-        }
-      }
-      
-      // Add temp pages (new pages)
-      for (const tempPage of tempPages) {
-        if (!pages.find(p => p.page_number === tempPage.page_number)) {
-          const pageData = tempPage.page_number === currentPage ? canvasData : 
-                          (tempPage.canvas_data || {});
-          allPagesToSave.push({ original_number: tempPage.page_number, canvas_data: pageData });
-        }
-      }
+      // Alle Seiten ausschließlich aus tempPages (ohne gelöschte) zusammenstellen
+      const allPagesToSave = tempPages
+        .filter(p => !deletedPages.includes(p.page_number))
+        .map(p => ({
+          original_number: p.page_number,
+          canvas_data: p.page_number === currentPage ? canvasData : (p.canvas_data || {})
+        }));
       
       // Sort by original page number
       allPagesToSave.sort((a, b) => a.original_number - b.original_number);
@@ -186,9 +169,8 @@ const BookEditor = ({ token, setToken }) => {
         );
       }
       
-      // Refresh pages from server to reflect saved state, then clear local buffers
+      // State mit Serverstand aktualisieren; tempPages wird in fetchPages gespiegelt
       await fetchPages();
-      setTempPages([]);
       setDeletedPages([]);
       
       showSnackbar('Freundschaftsbuch erfolgreich gespeichert!', 'success');
@@ -220,45 +202,30 @@ const BookEditor = ({ token, setToken }) => {
   };
 
   const changePage = (newPage) => {
-    // Check if target page is deleted
     if (deletedPages.includes(newPage)) {
-      return; // Don't navigate to deleted pages
+      return;
     }
     
     // Save current page content before switching
     if (editor) {
       const canvasData = editor.store.getSnapshot();
-      
-      // Update temp page if it exists, or update saved page data
-      const tempPageIndex = tempPages.findIndex(p => p.page_number === currentPage);
-      if (tempPageIndex !== -1) {
-        setTempPages(prev => prev.map(p => 
-          p.page_number === currentPage 
-            ? { ...p, canvas_data: canvasData }
-            : p
-        ));
-      } else {
-        // For saved pages, we need to track changes too
-        setTempPages(prev => {
-          const existingTemp = prev.find(p => p.page_number === currentPage);
-          if (existingTemp) {
-            return prev.map(p => 
-              p.page_number === currentPage 
-                ? { ...p, canvas_data: canvasData }
-                : p
-            );
-          } else {
-            return [...prev, { page_number: currentPage, canvas_data: canvasData }];
-          }
-        });
-      }
+      setTempPages(prev => {
+        const existingIndex = prev.findIndex(p => p.page_number === currentPage);
+        if (existingIndex !== -1) {
+          return prev.map(p => 
+            p.page_number === currentPage 
+              ? { ...p, canvas_data: canvasData }
+              : p
+          );
+        } else {
+          return [...prev, { page_number: currentPage, canvas_data: canvasData }];
+        }
+      });
     }
     
     setCurrentPage(newPage);
     
-    // Zoom to content after page switch
     if (editor) {
-      
       setTimeout(() => {
         const { canvasWidth, canvasHeight } = getPageDimensions(bookPageSize, bookOrientation);
         editor.zoomToFit({
@@ -276,16 +243,30 @@ const BookEditor = ({ token, setToken }) => {
   };
 
   const addNewPage = () => {
-    const allPages = [...pages, ...tempPages].filter(p => !deletedPages.includes(p.page_number));
+    // Save current page before adding new one
+    if (editor) {
+      const canvasData = editor.store.getSnapshot();
+      setTempPages(prev => {
+        const existingIndex = prev.findIndex(p => p.page_number === currentPage);
+        if (existingIndex !== -1) {
+          return prev.map(p => 
+            p.page_number === currentPage 
+              ? { ...p, canvas_data: canvasData }
+              : p
+          );
+        } else {
+          return [...prev, { page_number: currentPage, canvas_data: canvasData }];
+        }
+      });
+    }
+    
+    const allPages = tempPages.filter(p => !deletedPages.includes(p.page_number));
     const maxPage = allPages.length > 0 ? Math.max(...allPages.map(p => p.page_number)) : 0;
     const newPageNumber = maxPage + 1;
     
-    // For new books with no pages, start with page 1
-    const pageNumber = allPages.length === 0 ? 1 : newPageNumber;
-    
     // Add to temporary pages
-    setTempPages(prev => [...prev, { page_number: pageNumber, canvas_data: null }]);
-    setCurrentPage(pageNumber);
+    setTempPages(prev => [...prev, { page_number: newPageNumber, canvas_data: null }]);
+    setCurrentPage(newPageNumber);
     
     // Clear canvas for new page
     if (editor) {
@@ -347,12 +328,12 @@ const BookEditor = ({ token, setToken }) => {
   };
 
   const getTotalPages = () => {
-    const allPages = [...pages, ...tempPages].filter(p => !deletedPages.includes(p.page_number));
+    const allPages = tempPages.filter(p => !deletedPages.includes(p.page_number));
     return allPages.length;
   };
 
   const getMaxPage = () => {
-    const allPages = [...pages, ...tempPages].filter(p => !deletedPages.includes(p.page_number));
+    const allPages = tempPages.filter(p => !deletedPages.includes(p.page_number));
     return allPages.length > 0 ? Math.max(...allPages.map(p => p.page_number)) : 1;
   };
 
@@ -365,13 +346,9 @@ const BookEditor = ({ token, setToken }) => {
     try {
       showSnackbar('PDF wird erstellt...', 'info');
       
-      // Get unique pages only
-      const uniquePages = new Map();
-      [...pages, ...tempPages]
+      // Seiten ausschließlich aus tempPages (ohne gelöschte)
+      const allPages = tempPages
         .filter(p => !deletedPages.includes(p.page_number))
-        .forEach(p => uniquePages.set(p.page_number, p));
-      
-      const allPages = Array.from(uniquePages.values())
         .sort((a, b) => a.page_number - b.page_number);
 
       if (allPages.length === 0) {
@@ -390,10 +367,9 @@ const BookEditor = ({ token, setToken }) => {
       for (let i = 0; i < allPages.length; i++) {
         const page = allPages[i];
         
-        // Load page data
+        // Load page data ausschließlich aus tempPages
         const tempPageData = tempPages.find(p => p.page_number === page.page_number);
-        const pageData = page.page_number === currentPage ? currentPageData :
-                        (tempPageData?.canvas_data || page.canvas_data);
+        const pageData = page.page_number === currentPage ? currentPageData : (tempPageData?.canvas_data || {});
         
         if (pageData && typeof pageData === 'object' && pageData.schema) {
           editor.store.loadSnapshot(pageData);
@@ -507,16 +483,14 @@ const BookEditor = ({ token, setToken }) => {
     }
   };
 
-  // Auto-create first page if book has no pages - use same flow as manual "Neue Seite"
+  // Auto-create first page for new books
   useEffect(() => {
-    if (editor && bookDataLoaded) {
-      const noPersistentPages = pages.length === 0;
-      const noTempPages = tempPages.length === 0;
-      if (noPersistentPages && noTempPages) {
-        addNewPage();
-      }
+    if (!initialPageCreatedRef.current && editor && bookDataLoaded && pages.length === 0 && tempPages.length === 0) {
+      initialPageCreatedRef.current = true;
+      setTempPages([{ page_number: 1, canvas_data: null }]);
+      setCurrentPage(1);
     }
-  }, [pages.length, tempPages.length, editor, bookDataLoaded]);
+  }, [editor, bookDataLoaded, pages.length, tempPages.length]);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -535,7 +509,7 @@ const BookEditor = ({ token, setToken }) => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <IconButton
               onClick={() => {
-                const allPages = [...pages, ...tempPages]
+                const allPages = tempPages
                   .filter(p => !deletedPages.includes(p.page_number))
                   .map(p => p.page_number)
                   .sort((a, b) => a - b);
@@ -543,7 +517,7 @@ const BookEditor = ({ token, setToken }) => {
                 if (prevPage) changePage(prevPage);
               }}
               disabled={(() => {
-                const allPages = [...pages, ...tempPages]
+                const allPages = tempPages
                   .filter(p => !deletedPages.includes(p.page_number))
                   .map(p => p.page_number)
                   .sort((a, b) => a - b);
@@ -564,7 +538,7 @@ const BookEditor = ({ token, setToken }) => {
             
             <IconButton
               onClick={() => {
-                const allPages = [...pages, ...tempPages]
+                const allPages = tempPages
                   .filter(p => !deletedPages.includes(p.page_number))
                   .map(p => p.page_number)
                   .sort((a, b) => a - b);
@@ -572,7 +546,7 @@ const BookEditor = ({ token, setToken }) => {
                 if (nextPage) changePage(nextPage);
               }}
               disabled={(() => {
-                const allPages = [...pages, ...tempPages]
+                const allPages = tempPages
                   .filter(p => !deletedPages.includes(p.page_number))
                   .map(p => p.page_number)
                   .sort((a, b) => a - b);
@@ -647,7 +621,7 @@ const BookEditor = ({ token, setToken }) => {
         open={Boolean(pageMenuAnchor)}
         onClose={() => setPageMenuAnchor(null)}
       >
-        {[...pages, ...tempPages]
+        {tempPages
           .filter(p => !deletedPages.includes(p.page_number))
           .sort((a, b) => a.page_number - b.page_number)
           .map(page => (
